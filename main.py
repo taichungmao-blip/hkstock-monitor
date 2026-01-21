@@ -85,4 +85,30 @@ def analyze_stock():
     # 策略判斷
     signal_text = "⚖️ **觀望 (Hold)**"
     
-    if last_ma5 > last_ma20 and last_
+    if last_ma5 > last_ma20 and last_hist > 0:
+        signal_text = "🚀 **強勢買入訊號 (Buy)**"
+    elif last_ma5 < last_ma20:
+        signal_text = "🔻 **趨勢轉弱/賣出 (Sell)**"
+
+    coal_sentiment_str, _ = get_coal_price_sentiment()
+    
+    return f"""
+>>> ## 📊 【{STOCK_CODE} 監控報告】
+📅 {datetime.now().strftime('%Y-%m-%d')}
+
+**技術指標**
+• 收盤: `${last_close:.2f}`
+• 均線: `MA5 {last_ma5:.2f}` vs `MA20 {last_ma20:.2f}`
+• 動能: {'🔼 增強' if last_hist > 0 else '🔽 減弱'}
+
+**系統建議**
+{signal_text}
+
+**外部環境**
+{coal_sentiment_str}
+    """
+
+if __name__ == "__main__":
+    msg = analyze_stock()
+    print(msg)
+    send_discord_message(msg)
