@@ -5,7 +5,6 @@ import os
 from datetime import datetime
 
 # --- 設定區 ---
-# 修正 1: 務必使用 4 位數代碼 "3668.HK" (Yahoo 不認 03668)
 STOCK_CODE = "3668.HK" 
 PROXY_COAL_STOCK = "YAL.AX"
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
@@ -28,7 +27,6 @@ def send_discord_message(message):
 
 def get_coal_price_sentiment():
     try:
-        # 修正 2: 移除手動 Session，完全交給 yfinance 處理
         coal_proxy = yf.Ticker(PROXY_COAL_STOCK)
         hist = coal_proxy.history(period="2d")
         
@@ -56,16 +54,13 @@ def analyze_stock():
     print(f"正在分析 {STOCK_CODE}...")
     
     try:
-        # 修正 3: 移除 session 參數，這是解決報錯的關鍵
-        # 只要代碼對 (3668.HK)，Yahoo 就能下載
         df = yf.download(STOCK_CODE, period="6mo", progress=False)
     except Exception as e:
         return f"⚠️ 下載失敗: {e}"
     
     if df.empty:
-        return f"⚠️ 無法獲取 {STOCK_CODE} 數據 (請確認代碼是否正確)"
+        return f"⚠️ 無法獲取 {STOCK_CODE} 數據"
 
-    # 處理 MultiIndex (Yahoo 新版格式)
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
 
@@ -76,15 +71,26 @@ def analyze_stock():
     # 2. 手動計算 MACD
     df['MACD'], df['Signal'], df['Hist'] = calculate_macd(df)
     
-    # 取得最新數據
-    last_close = float(df['Close'].iloc[-1])
+    # --- 新增：計算漲跌幅 ---
+    prev_close = float(df['Close'].iloc[-2]) # 前一日收盤
+    last_close = float(df['Close'].iloc[-1]) # 最新收盤
+    
+    change_amount = last_close - prev_close
+    change_pct = (change_amount / prev_close) * 100
+    
+    # 判斷顯示符號 (港股習慣：漲是紅，跌是綠；這裡用箭頭更直觀)
+    if change_pct >= 0:
+        change_str = f"🔺 +{change_pct:.2f}% (+{change_amount:.2f})"
+    else:
+        change_str = f"🔻 {change_pct:.2f}% ({change_amount:.2f})"
+    # -----------------------
+
     last_ma5 = float(df['MA5'].iloc[-1])
     last_ma20 = float(df['MA20'].iloc[-1])
     last_hist = float(df['Hist'].iloc[-1])
 
     # 策略判斷
     signal_text = "⚖️ **觀望 (Hold)**"
-    
     if last_ma5 > last_ma20 and last_hist > 0:
         signal_text = "🚀 **強勢買入訊號 (Buy)**"
     elif last_ma5 < last_ma20:
@@ -97,7 +103,7 @@ def analyze_stock():
 📅 {datetime.now().strftime('%Y-%m-%d')}
 
 **技術指標**
-• 收盤: `${last_close:.2f}`
+• 收盤: `${last_close:.2f}` {change_str}
 • 均線: `MA5 {last_ma5:.2f}` vs `MA20 {last_ma20:.2f}`
 • 動能: {'🔼 增強' if last_hist > 0 else '🔽 減弱'}
 
