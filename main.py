@@ -5,7 +5,8 @@ import os
 from datetime import datetime
 
 # --- 設定區 ---
-STOCK_CODE = "03668.HK"
+# 修正 1: 去掉開頭的 0，改用 Yahoo 慣用的 3668.HK
+STOCK_CODE = "3668.HK" 
 PROXY_COAL_STOCK = "YAL.AX"
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 
@@ -27,7 +28,11 @@ def send_discord_message(message):
 
 def get_coal_price_sentiment():
     try:
-        coal_proxy = yf.Ticker(PROXY_COAL_STOCK)
+        # 修正 2: 建立自定義 Session 以避免被擋 (404 錯誤常見原因)
+        session = requests.Session()
+        session.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+        
+        coal_proxy = yf.Ticker(PROXY_COAL_STOCK, session=session)
         hist = coal_proxy.history(period="2d")
         if len(hist) < 2: return "數據不足", 0
         
@@ -37,11 +42,11 @@ def get_coal_price_sentiment():
         
         sentiment = "🔴 煤炭情緒轉弱" if change_pct < 0 else "🟢 煤炭情緒轉強"
         return f"{sentiment} (澳股 YAL: {change_pct:+.2f}%)", change_pct
-    except:
+    except Exception as e:
+        print(f"煤價獲取失敗: {e}")
         return "無法獲取煤炭數據", 0
 
 def calculate_macd(df, fast=12, slow=26, signal=9):
-    """手動計算 MACD，不依賴外部套件"""
     exp1 = df['Close'].ewm(span=fast, adjust=False).mean()
     exp2 = df['Close'].ewm(span=slow, adjust=False).mean()
     macd = exp1 - exp2
@@ -51,18 +56,28 @@ def calculate_macd(df, fast=12, slow=26, signal=9):
 
 def analyze_stock():
     print(f"正在分析 {STOCK_CODE}...")
-    df = yf.download(STOCK_CODE, period="6mo")
+    
+    # 修正 3: 同樣為股票數據加入防擋 Session
+    session = requests.Session()
+    session.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+    
+    try:
+        # 加入 progress=False 讓 log 乾淨一點
+        df = yf.download(STOCK_CODE, period="6mo", session=session, progress=False)
+    except Exception as e:
+        return f"⚠️ 下載失敗: {e}"
     
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
         
-    if df.empty: return "⚠️ 無法獲取數據"
+    if df.empty: 
+        return f"⚠️ 無法獲取 {STOCK_CODE} 數據 (可能是 Yahoo API 暫時阻擋或代碼錯誤)"
 
     # 1. 計算均線
     df['MA5'] = df['Close'].rolling(window=5).mean()
     df['MA20'] = df['Close'].rolling(window=20).mean()
     
-    # 2. 手動計算 MACD (取代 pandas_ta)
+    # 2. 手動計算 MACD
     df['MACD'], df['Signal'], df['Hist'] = calculate_macd(df)
     
     # 取得最新數據
@@ -82,7 +97,7 @@ def analyze_stock():
     coal_sentiment_str, _ = get_coal_price_sentiment()
     
     return f"""
->>> ## 📊 【03668.HK 監控報告】
+>>> ## 📊 【{STOCK_CODE} 監控報告】
 📅 {datetime.now().strftime('%Y-%m-%d')}
 
 **技術指標**
@@ -98,4 +113,6 @@ def analyze_stock():
     """
 
 if __name__ == "__main__":
-    send_discord_message(analyze_stock())
+    msg = analyze_stock()
+    print(msg) # 在 Console 也印出來方便除錯
+    send_discord_message(msg)
