@@ -24,8 +24,8 @@ jobs:
         python -m pip install --upgrade pip
         # 安裝基礎庫
         pip install yfinance pandas requests
-        # 使用 git 協議安裝 pandas_ta 開發版，解決 "No matching distribution" 問題
-        pip install git+https://github.com/twopirllc/pandas-ta.git@development
+        # 【修正】改用 zip 網址直接安裝，繞過 git 權限錯誤
+        pip install https://github.com/twopirllc/pandas-ta/archive/refs/heads/development.zip
 
     - name: Run Monitor Script
       env:
