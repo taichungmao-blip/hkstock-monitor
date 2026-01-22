@@ -3,7 +3,7 @@ name: HK Stock Daily Monitor
 on:
   schedule:
     # UTC 時間 00:00 = 香港時間 08:00 (週一到週五)
-    - cron: '0 0 * * 1-5'
+    - cron: '20 23 * * *'
   workflow_dispatch:
 
 jobs:
