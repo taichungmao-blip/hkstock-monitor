@@ -4,6 +4,7 @@ import requests
 import os
 import matplotlib.pyplot as plt
 from datetime import datetime
+import json  # 1. 確保在程式碼最上方加入了 import json
 
 # --- 設定區 ---
 STOCK_CODE = "3668.HK" 
@@ -27,10 +28,12 @@ def send_discord_message(message, file_path=None):
     try:
         if file_path and os.path.exists(file_path):
             with open(file_path, "rb") as f:
-                # 使用 payload_json 發送文字與圖片
-                requests.post(DISCORD_WEBHOOK_URL, 
-                              data={"payload_json": pd.io.json.dumps(payload)}, 
-                              files={"file": f})
+                # 修改這裡：改用 json.dumps 而不是 pd.io.json.dumps
+                requests.post(
+                    DISCORD_WEBHOOK_URL, 
+                    data={"payload_json": json.dumps(payload)}, 
+                    files={"file": f}
+                )
         else:
             requests.post(DISCORD_WEBHOOK_URL, json=payload)
     except Exception as e:
