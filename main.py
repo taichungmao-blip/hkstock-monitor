@@ -2,14 +2,17 @@ import yfinance as yf
 import pandas as pd
 import requests
 import os
+import matplotlib.pyplot as plt
 from datetime import datetime
 
 # --- 設定區 ---
 STOCK_CODE = "3668.HK" 
-PROXY_COAL_STOCK = "YAL.AX"
+PROXY_COAL_STOCK = "YAL.AX"  # 確認為 Yancoal 澳股
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
+CHART_FILENAME = "trend_6mo_comparison.png"
+PERIOD = "6mo"  # 已改回 6 個月
 
-def send_discord_message(message):
+def send_discord_message(message, file_path=None):
     if not DISCORD_WEBHOOK_URL:
         print("未設定 Webhook，僅列印:")
         print(message)
@@ -20,101 +23,87 @@ def send_discord_message(message):
         "username": "港股監控機器人",
         "avatar_url": "https://cdn-icons-png.flaticon.com/512/2534/2534204.png"
     }
+
     try:
-        requests.post(DISCORD_WEBHOOK_URL, json=payload)
+        if file_path and os.path.exists(file_path):
+            with open(file_path, "rb") as f:
+                # 使用 payload_json 發送文字與圖片
+                requests.post(DISCORD_WEBHOOK_URL, 
+                              data={"payload_json": pd.io.json.dumps(payload)}, 
+                              files={"file": f})
+        else:
+            requests.post(DISCORD_WEBHOOK_URL, json=payload)
     except Exception as e:
         print(f"發送錯誤: {e}")
 
-def get_coal_price_sentiment():
-    try:
-        coal_proxy = yf.Ticker(PROXY_COAL_STOCK)
-        hist = coal_proxy.history(period="2d")
-        
-        if len(hist) < 2: return "數據不足", 0
-        
-        prev = hist['Close'].iloc[-2]
-        curr = hist['Close'].iloc[-1]
-        change_pct = ((curr - prev) / prev) * 100
-        
-        sentiment = "🔴 煤炭情緒轉弱" if change_pct < 0 else "🟢 煤炭情緒轉強"
-        return f"{sentiment} (澳股 YAL: {change_pct:+.2f}%)", change_pct
-    except Exception as e:
-        print(f"煤價數據錯誤: {e}")
-        return "無法獲取煤炭數據", 0
+def generate_6mo_chart(df_hk, df_yal):
+    """ 生成 6 個月走勢比較圖 """
+    plt.figure(figsize=(12, 6))
+    
+    # 歸一化處理 (Normalization): 以 6 個月前為基點 100
+    hk_norm = (df_hk['Close'] / df_hk['Close'].dropna().iloc[0]) * 100
+    yal_norm = (df_yal['Close'] / df_yal['Close'].dropna().iloc[0]) * 100
 
-def calculate_macd(df, fast=12, slow=26, signal=9):
-    exp1 = df['Close'].ewm(span=fast, adjust=False).mean()
-    exp2 = df['Close'].ewm(span=slow, adjust=False).mean()
-    macd = exp1 - exp2
-    signal_line = macd.ewm(span=signal, adjust=False).mean()
-    histogram = macd - signal_line
-    return macd, signal_line, histogram
+    plt.plot(hk_norm.index, hk_norm, label=f"{STOCK_CODE} (HK)", color='#1f77b4', linewidth=2)
+    plt.plot(yal_norm.index, yal_norm, label=f"{PROXY_COAL_STOCK} (AU)", color='#ff7f0e', linewidth=2)
 
-def analyze_stock():
-    print(f"正在分析 {STOCK_CODE}...")
+    plt.title(f"Price Trend Comparison - Last 6 Months", fontsize=14)
+    plt.xlabel("Date")
+    plt.ylabel("Performance (%) - Base 100")
+    plt.legend()
+    plt.grid(True, linestyle='--', alpha=0.5)
+    
+    plt.tight_layout()
+    plt.savefig(CHART_FILENAME)
+    plt.close()
+
+def analyze_and_report():
+    print(f"正在分析 {STOCK_CODE} (6個月數據)...")
     
     try:
-        df = yf.download(STOCK_CODE, period="6mo", progress=False)
+        df_hk = yf.download(STOCK_CODE, period=PERIOD, progress=False)
+        df_yal = yf.download(PROXY_COAL_STOCK, period=PERIOD, progress=False)
     except Exception as e:
-        return f"⚠️ 下載失敗: {e}"
+        return f"⚠️ 數據下載失敗: {e}", None
     
-    if df.empty:
-        return f"⚠️ 無法獲取 {STOCK_CODE} 數據"
+    if df_hk.empty or df_yal.empty:
+        return "⚠️ 無法獲取數據", None
 
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
+    # 清理資料欄位
+    if isinstance(df_hk.columns, pd.MultiIndex):
+        df_hk.columns = df_hk.columns.get_level_values(0)
+    if isinstance(df_yal.columns, pd.MultiIndex):
+        df_yal.columns = df_yal.columns.get_level_values(0)
 
-    # 1. 計算均線
-    df['MA5'] = df['Close'].rolling(window=5).mean()
-    df['MA20'] = df['Close'].rolling(window=20).mean()
+    # 繪圖
+    generate_6mo_chart(df_hk, df_yal)
+
+    # 計算當前指標 (基於最新一天)
+    last_close = float(df_hk['Close'].iloc[-1])
+    prev_close = float(df_hk['Close'].iloc[-2])
+    change_pct = ((last_close - prev_close) / prev_close) * 100
     
-    # 2. 手動計算 MACD
-    df['MACD'], df['Signal'], df['Hist'] = calculate_macd(df)
+    # 計算均線
+    ma5 = df_hk['Close'].rolling(5).mean().iloc[-1]
+    ma20 = df_hk['Close'].rolling(20).mean().iloc[-1]
     
-    # --- 新增：計算漲跌幅 ---
-    prev_close = float(df['Close'].iloc[-2]) # 前一日收盤
-    last_close = float(df['Close'].iloc[-1]) # 最新收盤
-    
-    change_amount = last_close - prev_close
-    change_pct = (change_amount / prev_close) * 100
-    
-    # 判斷顯示符號 (港股習慣：漲是紅，跌是綠；這裡用箭頭更直觀)
-    if change_pct >= 0:
-        change_str = f"🔺 +{change_pct:.2f}% (+{change_amount:.2f})"
-    else:
-        change_str = f"🔻 {change_pct:.2f}% ({change_amount:.2f})"
-    # -----------------------
+    signal = "🚀 **多頭**" if ma5 > ma20 else "⚠️ **空頭/整理**"
 
-    last_ma5 = float(df['MA5'].iloc[-1])
-    last_ma20 = float(df['MA20'].iloc[-1])
-    last_hist = float(df['Hist'].iloc[-1])
+    report = f"""
+>>> ## 📊 【{STOCK_CODE} 6個月監控報告】
+📅 日期: {datetime.now().strftime('%Y-%m-%d')}
 
-    # 策略判斷
-    signal_text = "⚖️ **觀望 (Hold)**"
-    if last_ma5 > last_ma20 and last_hist > 0:
-        signal_text = "🚀 **強勢買入訊號 (Buy)**"
-    elif last_ma5 < last_ma20:
-        signal_text = "🔻 **趨勢轉弱/賣出 (Sell)**"
+**行情摘要**
+• 現價: `${last_close:.2f}` ({change_pct:+.2f}%)
+• 趨勢: `MA5 {ma5:.2f}` {' > ' if ma5 > ma20 else ' < '} `MA20 {ma20:.2f}`
+• 訊號: {signal}
 
-    coal_sentiment_str, _ = get_coal_price_sentiment()
-    
-    return f"""
->>> ## 📊 【{STOCK_CODE} 監控報告】
-📅 {datetime.now().strftime('%Y-%m-%d')}
-
-**技術指標**
-• 收盤: `${last_close:.2f}` {change_str}
-• 均線: `MA5 {last_ma5:.2f}` vs `MA20 {last_ma20:.2f}`
-• 動能: {'🔼 增強' if last_hist > 0 else '🔽 減弱'}
-
-**系統建議**
-{signal_text}
-
-**外部環境**
-{coal_sentiment_str}
+**半年累計漲跌**
+• {STOCK_CODE}: `{((last_close/df_hk['Close'].dropna().iloc[0])-1)*100:+.2f}%`
+• {PROXY_COAL_STOCK}: `{((float(df_yal['Close'].iloc[-1])/df_yal['Close'].dropna().iloc[0])-1)*100:+.2f}%`
     """
+    return report, CHART_FILENAME
 
 if __name__ == "__main__":
-    msg = analyze_stock()
-    print(msg)
-    send_discord_message(msg)
+    msg, path = analyze_and_report()
+    send_discord_message(msg, path)
