@@ -23,7 +23,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         # 只需要這三個基本套件，保證成功
-        pip install yfinance pandas requests
+        pip install yfinance pandas requests matplotlib
 
     - name: Run Monitor Script
       env:
